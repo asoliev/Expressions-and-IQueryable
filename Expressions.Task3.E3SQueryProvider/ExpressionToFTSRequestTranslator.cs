@@ -25,15 +25,52 @@ namespace Expressions.Task3.E3SQueryProvider
 
         protected override Expression VisitMethodCall(MethodCallExpression node)
         {
-            if (node.Method.DeclaringType == typeof(Queryable)
-                && node.Method.Name == "Where")
+            if (node.Method.DeclaringType == typeof(Queryable) && node.Method.Name == "Where")
             {
                 var predicate = node.Arguments[1];
                 Visit(predicate);
+                return node;
+            }
+            else if (node.Method.DeclaringType == typeof(string))
+            {
+                Visit(node.Object);
+
+                switch (node.Method.Name)
+                {
+                    case nameof(string.Equals):
+                        _resultStringBuilder.Append("(");
+                        Visit(node.Arguments[0]);
+                        _resultStringBuilder.Append(")");
+                        break;
+
+                    case nameof(string.StartsWith):
+                        _resultStringBuilder.Append("(");
+                        Visit(node.Arguments[0]);
+                        _resultStringBuilder.Append("*)");
+                        break;
+
+                    case nameof(string.EndsWith):
+                        _resultStringBuilder.Append("(*");
+                        Visit(node.Arguments[0]);
+                        _resultStringBuilder.Append(")");
+                        break;
+
+                    case nameof(string.Contains):
+                        _resultStringBuilder.Append("(*");
+                        Visit(node.Arguments[0]);
+                        _resultStringBuilder.Append("*)");
+                        break;
+
+                    default:
+                        throw new NotSupportedException($"Method '{node.Method.Name}' is not supported");
+                }
 
                 return node;
             }
-            return base.VisitMethodCall(node);
+            else
+            {
+                return base.VisitMethodCall(node);
+            }
         }
 
         protected override Expression VisitBinary(BinaryExpression node)
@@ -41,14 +78,31 @@ namespace Expressions.Task3.E3SQueryProvider
             switch (node.NodeType)
             {
                 case ExpressionType.Equal:
-                    if (node.Left.NodeType != ExpressionType.MemberAccess)
+                    Expression left = node.Left;
+                    Expression right = node.Right;
+
+                    if (left.NodeType == ExpressionType.Constant && right.NodeType == ExpressionType.MemberAccess)
+                    {
+                        left = node.Right;
+                        right = node.Left;
+                    }
+
+                    if (left.NodeType != ExpressionType.MemberAccess)
                         throw new NotSupportedException($"Left operand should be property or field: {node.NodeType}");
 
-                    if (node.Right.NodeType != ExpressionType.Constant)
+                    if (right.NodeType != ExpressionType.Constant)
                         throw new NotSupportedException($"Right operand should be constant: {node.NodeType}");
 
-                    Visit(node.Left);
+                    Visit(left);
                     _resultStringBuilder.Append("(");
+                    Visit(right);
+                    _resultStringBuilder.Append(")");
+                    break;
+
+                case ExpressionType.AndAlso:
+                    _resultStringBuilder.Append("(");
+                    Visit(node.Left);
+                    _resultStringBuilder.Append(" AND ");
                     Visit(node.Right);
                     _resultStringBuilder.Append(")");
                     break;
@@ -56,7 +110,6 @@ namespace Expressions.Task3.E3SQueryProvider
                 default:
                     throw new NotSupportedException($"Operation '{node.NodeType}' is not supported");
             };
-
             return node;
         }
 
