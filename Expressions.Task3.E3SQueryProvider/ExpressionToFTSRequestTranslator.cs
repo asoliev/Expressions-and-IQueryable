@@ -7,7 +7,21 @@ namespace Expressions.Task3.E3SQueryProvider
 {
     public class ExpressionToFtsRequestTranslator : ExpressionVisitor
     {
-        readonly StringBuilder _resultStringBuilder;
+        private const string EQUALS_STR = nameof(string.Equals);
+        private const string CONTAINS_STR = nameof(string.Contains);
+        private const string STARTS_WITH_STR = nameof(string.StartsWith);
+        private const string ENDS_WITH_STR = nameof(string.EndsWith);
+        private const string WHERE_STR = "Where";
+
+        private readonly StringBuilder _resultStringBuilder;
+        private readonly string[] _partialCompareMethods = new string[]
+        {
+            EQUALS_STR,
+            CONTAINS_STR,
+            STARTS_WITH_STR,
+            ENDS_WITH_STR
+        };
+
 
         public ExpressionToFtsRequestTranslator()
         {
@@ -23,54 +37,41 @@ namespace Expressions.Task3.E3SQueryProvider
 
         #region protected methods
 
+        private void AppendStarIfNeeded(MethodCallExpression node, bool isleftFixed)
+        {
+            if (
+                    node.Method.Name == CONTAINS_STR ||
+                    (isleftFixed && node.Method.Name == ENDS_WITH_STR) ||
+                    (!isleftFixed && node.Method.Name == STARTS_WITH_STR)
+                )
+            {
+                _resultStringBuilder.Append('*');
+            }
+        }
+
         protected override Expression VisitMethodCall(MethodCallExpression node)
         {
-            if (node.Method.DeclaringType == typeof(Queryable) && node.Method.Name == "Where")
+            if (node.Method.DeclaringType == typeof(Queryable) && node.Method.Name == WHERE_STR)
             {
                 var predicate = node.Arguments[1];
                 Visit(predicate);
+
                 return node;
             }
-            else if (node.Method.DeclaringType == typeof(string))
+            if (node.Method.DeclaringType == typeof(string) && _partialCompareMethods.Contains(node.Method.Name))
             {
                 Visit(node.Object);
-
-                switch (node.Method.Name)
-                {
-                    case nameof(string.Equals):
-                        _resultStringBuilder.Append("(");
-                        Visit(node.Arguments[0]);
-                        _resultStringBuilder.Append(")");
-                        break;
-
-                    case nameof(string.StartsWith):
-                        _resultStringBuilder.Append("(");
-                        Visit(node.Arguments[0]);
-                        _resultStringBuilder.Append("*)");
-                        break;
-
-                    case nameof(string.EndsWith):
-                        _resultStringBuilder.Append("(*");
-                        Visit(node.Arguments[0]);
-                        _resultStringBuilder.Append(")");
-                        break;
-
-                    case nameof(string.Contains):
-                        _resultStringBuilder.Append("(*");
-                        Visit(node.Arguments[0]);
-                        _resultStringBuilder.Append("*)");
-                        break;
-
-                    default:
-                        throw new NotSupportedException($"Method '{node.Method.Name}' is not supported");
-                }
+                _resultStringBuilder.Append('(');
+                AppendStarIfNeeded(node, true);
+                var predicate = node.Arguments[0];
+                Visit(predicate);
+                AppendStarIfNeeded(node, false);
+                _resultStringBuilder.Append(')');
 
                 return node;
             }
-            else
-            {
-                return base.VisitMethodCall(node);
-            }
+
+            return base.VisitMethodCall(node);
         }
 
         protected override Expression VisitBinary(BinaryExpression node)
@@ -78,14 +79,9 @@ namespace Expressions.Task3.E3SQueryProvider
             switch (node.NodeType)
             {
                 case ExpressionType.Equal:
-                    Expression left = node.Left;
-                    Expression right = node.Right;
-
-                    if (left.NodeType == ExpressionType.Constant && right.NodeType == ExpressionType.MemberAccess)
-                    {
-                        left = node.Right;
-                        right = node.Left;
-                    }
+                    var (left, right) = node.Right.NodeType == ExpressionType.Constant
+                       ? (node.Left, node.Right)
+                       : (node.Right, node.Left);
 
                     if (left.NodeType != ExpressionType.MemberAccess)
                         throw new NotSupportedException($"Left operand should be property or field: {node.NodeType}");
@@ -94,17 +90,15 @@ namespace Expressions.Task3.E3SQueryProvider
                         throw new NotSupportedException($"Right operand should be constant: {node.NodeType}");
 
                     Visit(left);
-                    _resultStringBuilder.Append("(");
+                    _resultStringBuilder.Append('(');
                     Visit(right);
-                    _resultStringBuilder.Append(")");
+                    _resultStringBuilder.Append(')');
                     break;
 
                 case ExpressionType.AndAlso:
-                    _resultStringBuilder.Append("(");
                     Visit(node.Left);
                     _resultStringBuilder.Append(" AND ");
                     Visit(node.Right);
-                    _resultStringBuilder.Append(")");
                     break;
 
                 default:
@@ -115,7 +109,7 @@ namespace Expressions.Task3.E3SQueryProvider
 
         protected override Expression VisitMember(MemberExpression node)
         {
-            _resultStringBuilder.Append(node.Member.Name).Append(":");
+            _resultStringBuilder.Append(node.Member.Name).Append(':');
 
             return base.VisitMember(node);
         }
